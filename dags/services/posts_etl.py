@@ -27,7 +27,14 @@ class PostsExtractor:
 
             posts.extend(batch)
 
-            last_post_time = batch[-1].get('published_at')
+            logging.info(batch[-1].get('publishedAt'))
+            
+            try:
+                last_post_time = datetime.fromisoformat(batch[-1].get('publishedAt').replace('Z', '+00:00'))
+            except Exception as e:
+                logging.error(f"Failed to extract last post time: {e}")
+                break
+
             if last_post_time is None:
                 logging.error("Failed to extract last post time")
                 break
@@ -36,6 +43,7 @@ class PostsExtractor:
                 break
 
             n += 10
+        return posts
 
 class PostsTransformer:
     def format_datetime(self, dt_str):
@@ -71,38 +79,56 @@ class PostsLoader:
         self.mongo_hook = mongo_hook
         self.clickhouse_hook = clickhouse_hook
 
-    def load_postgresql(self, posts: list):
+    def load_all(self, posts: list, loaded_at: datetime):
+        self.load_postgresql(posts, loaded_at)
+        self.load_mongodb(posts, loaded_at)
+        self.load_clickhouse(posts, loaded_at)
+
+    def load_postgresql(self, posts: list, loaded_at: datetime):
         pg_conn = self.pg_hook.get_conn()
         cursor = pg_conn.cursor()
         insert_sql = """
-        INSERT INTO posts (slug, author_name, author_id, content_raw, published_at, updated_at,
-                           total_unique_impressions, num_comments)
-        VALUES (%(slug)s, %(author_name)s, %(author_id)s, %(content_raw)s, %(published_at)s,
-                %(updated_at)s, %(total_unique_impressions)s, %(num_comments)s)
-        ON CONFLICT (slug) DO UPDATE SET
-            updated_at = EXCLUDED.updated_at,
-            total_unique_impressions = EXCLUDED.total_unique_impressions,
-            num_comments = EXCLUDED.num_comments;
+        INSERT INTO posts_ods (
+            slug, author_name, author_id, content_raw, published_at, updated_at,
+            total_unique_impressions, num_comments, loaded_at
+        ) VALUES (
+            %(slug)s, %(author_name)s, %(author_id)s, %(content_raw)s, %(published_at)s,
+            %(updated_at)s, %(total_unique_impressions)s, %(num_comments)s, %(loaded_at)s
+        );
         """
         for post in posts:
-            cursor.execute(insert_sql, post)
+            post_with_ts = {**post, 'loaded_at': loaded_at}
+            cursor.execute(insert_sql, post_with_ts)
         pg_conn.commit()
         cursor.close()
 
-    def load_mongodb(self, posts: list):
-        collection = self.mongo_hook.get_collection("posts")
+    def load_mongodb(self, posts: list, loaded_at: datetime):
+        collection = self.mongo_hook.get_collection("posts_ods")
         for post in posts:
-            collection.update_one({'slug': post['slug']}, {'$set': post}, upsert=True)
+            doc = {**post, 'loaded_at': loaded_at}
+            collection.insert_one(doc)
 
-    def load_clickhouse(self, posts: list):
+    def load_clickhouse(self, posts: list, loaded_at: datetime):
+        client = self.clickhouse_hook.get_conn()
+        rows = []
         for post in posts:
-            query = f"""
-            INSERT INTO posts (slug, author_name, author_id, content_raw, published_at, updated_at,
-                total_unique_impressions, num_comments) VALUES (
-                '{post.get('slug', '')}', '{post.get('author_name', '')}', '{post.get('author_id', '')}',
-                '{post.get('content_raw', '')}', '{post.get('published_at', '1970-01-01T00:00:00')}',
-                '{post.get('updated_at', '1970-01-01T00:00:00')}', {post.get('total_unique_impressions', 0)},
-                {post.get('num_comments', 0)}
-            )
+            rows.append((
+                post.get('slug'),
+                post.get('author_name'),
+                post.get('author_id'),
+                post.get('content_raw'),
+                post.get('published_at'),
+                post.get('updated_at'),
+                post.get('total_unique_impressions', 0) or 0,
+                post.get('num_comments', 0) or 0,
+                loaded_at
+            ))
+        client.execute(
             """
-            self.clickhouse_hook.run(query)
+            INSERT INTO posts_ods (
+                slug, author_name, author_id, content_raw, published_at, updated_at,
+                total_unique_impressions, num_comments, loaded_at
+            ) VALUES
+            """,
+            rows
+        )

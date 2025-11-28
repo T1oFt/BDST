@@ -336,18 +336,18 @@ services:
     environment:
       POSTGRES_USER: user
       POSTGRES_PASSWORD: password
-      POSTGRES_DB: airflow
+      POSTGRES_DB: huggingface
     ports:
       - "5432:5432"
     volumes:
-      - user-pgdata:/var/lib/postgresql/data
+      - ./data/user-pg:/var/lib/postgresql/data
 
   mongo:
     image: mongo:latest
     ports:
       - "27017:27017"
     volumes:
-      - mongodata:/data/db
+      - ./data/mongo:/data/db
   
   clickhouse:
     image: clickhouse/clickhouse-server:latest
@@ -368,7 +368,7 @@ services:
       MINIO_ROOT_PASSWORD: minioadminpassword
     command: server /data --console-address ":9001" 
     volumes:
-      - minio_data:/data
+      - ./data/minio:/data
 
 volumes:
   postgres-db-volume:

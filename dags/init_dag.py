@@ -1,9 +1,12 @@
 from airflow import DAG
-from airflow.operators.python import PythonOperator
+from airflow.providers.standard.operators.python import PythonOperator
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 from airflow.providers.mongo.hooks.mongo import MongoHook
-from airflow.providers.clickhouse.hooks.clickhouse import ClickHouseHook
+from airflow_clickhouse_plugin.hooks.clickhouse import ClickHouseHook
+from airflow.models import Variable
 from datetime import datetime, timedelta
+
+from services.minio_client import MinioHook
 
 
 default_args = {
@@ -15,7 +18,7 @@ default_args = {
 with DAG(
         'db_init_dag',
         default_args=default_args,
-        schedule_interval=None,
+        schedule=None,
         catchup=False,
 ) as dag:
 
@@ -26,29 +29,35 @@ with DAG(
 
         # Models
         cursor.execute("""
-        CREATE TABLE IF NOT EXISTS models (
-            id TEXT PRIMARY KEY,
+        CREATE TABLE IF NOT EXISTS models_ods (
+            id TEXT,
             owner TEXT,
             author TEXT,
-            sha TEXT,
-            created_at TIMESTAMP,
-            last_modified TIMESTAMP,
-            private BOOLEAN,
-            disabled BOOLEAN,
-            downloads INTEGER,
-            downloads_all_time INTEGER,
+            created_at TIMESTAMP WITH TIME ZONE,
+            downloads BIGINT,
             likes INTEGER,
             library_name TEXT,
-            tags TEXT,
             pipeline_tag TEXT,
-            trending_score INTEGER
+            trending_score DOUBLE PRECISION,
+            language TEXT[],
+            library TEXT[],
+            task TEXT[],
+            license TEXT,
+            base_models TEXT[],
+            modification TEXT,
+            region TEXT,
+            diffusers_pipeline TEXT,
+            deploy TEXT[],
+            dataset TEXT[],
+            arxiv TEXT[],
+            loaded_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
         );
         """)
 
         # Papers
         cursor.execute("""
-        CREATE TABLE IF NOT EXISTS papers (
-            id TEXT PRIMARY KEY,
+        CREATE TABLE IF NOT EXISTS papers_ods (
+            id TEXT,
             published_at TIMESTAMP,
             title TEXT,
             summary TEXT,
@@ -57,102 +66,120 @@ with DAG(
             source TEXT,
             comments INTEGER,
             submitted_at TIMESTAMP,
-            submitted_by TEXT
+            submitted_by TEXT,
+            loaded_at TIMESTAMP DEFAULT NOW()
         );
         """)
 
         # Posts
         cursor.execute("""
-        CREATE TABLE IF NOT EXISTS posts (
-            slug TEXT PRIMARY KEY,
+        CREATE TABLE IF NOT EXISTS posts_ods (
+            slug TEXT,
             author_name TEXT,
             author_id TEXT,
             content_raw TEXT,
             published_at TIMESTAMP,
             updated_at TIMESTAMP,
             total_unique_impressions INTEGER,
-            num_comments INTEGER
+            num_comments INTEGER,
+            loaded_at TIMESTAMP DEFAULT NOW()
         );
         """)
 
         conn.commit()
         cursor.close()
 
+
     def init_clickhouse():
         ch_hook = ClickHouseHook(clickhouse_conn_id='clickhouse_hf_conn')
-        
-        #models
-        ch_hook.run("""
-        CREATE TABLE IF NOT EXISTS models (
+        conn = ch_hook.get_conn()
+
+        # models
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS models_ods (
             id String,
-            owner String,
-            author String,
-            sha String,
+            owner Nullable(String),
+            author Nullable(String),
             created_at DateTime,
-            last_modified DateTime,
-            private UInt8,
-            disabled UInt8,
-            downloads UInt32,
-            downloads_all_time UInt32,
+            downloads UInt64,
             likes UInt32,
-            library_name String,
-            tags String,
-            pipeline_tag String,
-            trending_score UInt32
+            library_name Nullable(String),
+            pipeline_tag Nullable(String),
+            trending_score Float64,
+            language Array(String),
+            library Array(String),
+            task Array(String),
+            license Nullable(String),
+            base_models Array(String),
+            modification Nullable(String),
+            region Nullable(String),
+            diffusers_pipeline Nullable(String),
+            deploy Array(String),
+            dataset Array(String),
+            arxiv Array(String),
+            loaded_at DateTime DEFAULT now()
         ) ENGINE = MergeTree()
-        ORDER BY id;
-        """)
-        
-        #papers
-        ch_hook.run("""
-        CREATE TABLE IF NOT EXISTS papers (
-            id String,
-            published_at DateTime,
-            title String,
-            summary String,
-            upvotes UInt32,
-            discussion_id String,
-            source String,
-            comments UInt32,
-            submitted_at DateTime,
-            submitted_by String
-        ) ENGINE = MergeTree()
-        ORDER BY id;
+        ORDER BY loaded_at;
         """)
 
-        #posts
-        ch_hook.run("""
-        CREATE TABLE IF NOT EXISTS posts (
+        # papers
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS papers_ods (
+            id String,
+            published_at DateTime,
+            title Nullable(String),
+            summary Nullable(String),
+            upvotes UInt32,
+            discussion_id Nullable(String),
+            source Nullable(String),
+            comments UInt32,
+            submitted_at DateTime,
+            submitted_by Nullable(String),
+            loaded_at DateTime DEFAULT now()
+        ) ENGINE = MergeTree()
+        ORDER BY loaded_at;
+        """)
+
+        # posts
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS posts_ods (
             slug String,
-            author_name String,
-            author_id String,
-            content_raw String,
+            author_name Nullable(String),
+            author_id Nullable(String),
+            content_raw Nullable(String),
             published_at DateTime,
             updated_at DateTime,
             total_unique_impressions UInt32,
-            num_comments UInt32
+            num_comments UInt32,
+            loaded_at DateTime DEFAULT now()
         ) ENGINE = MergeTree()
-        ORDER BY slug;
+        ORDER BY loaded_at;
         """)
 
+
     def init_mongodb():
-        mongo_hook = MongoHook(conn_id='mongo_hf_conn')
-        db = mongo_hook.get_db()
+        mongo_hook = MongoHook(mongo_conn_id='mongo_hf_conn')
+        client = mongo_hook.get_conn()
+        db = client['huggingface']
+        for coll_name in ['models_ods', 'papers_ods', 'posts_ods']:
+                    if coll_name not in db.list_collection_names():
+                        db.create_collection(coll_name)
 
-        if 'models' not in db.list_collection_names():
-            db.create_collection('models')
-        db.models.create_index('id', unique=True)
 
-        if 'papers' not in db.list_collection_names():
-            db.create_collection('papers')
-        db.papers.create_index('id', unique=True)
+    def init_minio():
+        hook = MinioHook(minio_conn_id='minio_hf_conn')
+        client = hook.get_conn()
+        bucket_name = Variable.get("minio_bucket", default_var="etl-data")
 
-        if 'posts' not in db.list_collection_names():
-            db.create_collection('posts')
-        db.posts.create_index('slug', unique=True)
+        try:
+            client.head_bucket(Bucket=bucket_name)
+        except Exception as e:
+             client.create_bucket(Bucket=bucket_name)
+
 
     create_postgres = PythonOperator(task_id='init_postgres', python_callable=init_postgres)
     create_clickhouse = PythonOperator(task_id='init_clickhouse', python_callable=init_clickhouse)
     create_mongo = PythonOperator(task_id='init_mongodb', python_callable=init_mongodb)
+    create_minio = PythonOperator(task_id='init_minio', python_callable=init_minio)
 
-    create_postgres >> create_clickhouse >> create_mongo
+    [create_postgres, create_clickhouse, create_mongo, create_minio]
