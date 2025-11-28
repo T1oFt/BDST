@@ -1,15 +1,52 @@
 from datetime import datetime
 import logging
 
-from huggingface_hub import list_papers
+from huggingface_hub import paper_info
+import requests
+from bs4 import BeautifulSoup
+import re
 
 
 class PapersExtractor:
-    def __init__(self, query="*"):
-        self.query = query
+    def __init__(self):
+        self.date = datetime.now().strftime("%Y-%m-%d")
+
+    def _get_daily_paper_ids(self):
+        daily_url = f"https://huggingface.co/papers/date/{self.date}"
+        
+        try:
+            response = requests.get(daily_url)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            paper_links = soup.find_all('a', href=re.compile(r'/papers/[^/]+'))
+            
+            paper_ids = []
+            for link in paper_links:
+                href = link.get('href')
+                if href and '/papers/' in href:
+                    paper_id = href.split('/papers/')[-1].strip('/')
+                    if re.match(r'^\d{4}\.\d{5}$', paper_id) and paper_id not in paper_ids:
+                        paper_ids.append(paper_id)
+
+            return paper_ids
+            
+        except Exception as e:
+            print(f"Ошибка парсинга страницы {daily_url}: {e}")
+            return []
+
 
     def extract(self):
-        return list(list_papers(query=self.query))
+        daily_paper_ids = self._get_daily_paper_ids()
+        
+        papers_data = []
+        for paper_id in daily_paper_ids:
+            paper = paper_info(paper_id)
+            paper.submitted_by = paper.submitted_by.username
+            if paper:
+                papers_data.append(paper)
+        
+        return papers_data
 
 
 class PapersTransformer:
@@ -57,10 +94,10 @@ class PapersLoader:
         cursor = pg_conn.cursor()
         insert_sql = """
         INSERT INTO papers_ods (
-            id, published_at, title, summary, upvotes, discussion_id,
+            id, authors, published_at, title, summary, upvotes, discussion_id,
             source, comments, submitted_at, submitted_by, loaded_at
         ) VALUES (
-            %(id)s, %(published_at)s, %(title)s, %(summary)s, %(upvotes)s, %(discussion_id)s,
+            %(id)s, %(authors)s, %(published_at)s, %(title)s, %(summary)s, %(upvotes)s, %(discussion_id)s,
             %(source)s, %(comments)s, %(submitted_at)s, %(submitted_by)s, %(loaded_at)s
         );
         """
@@ -82,6 +119,7 @@ class PapersLoader:
         for paper in papers:
             rows.append((
                 paper.get('id'),
+                paper.get('authors') or [],
                 paper.get('published_at'),
                 paper.get('title'),
                 paper.get('summary'),
@@ -96,7 +134,7 @@ class PapersLoader:
         client.execute(
             """
             INSERT INTO papers_ods (
-                id, published_at, title, summary, upvotes, discussion_id,
+                id, authors, published_at, title, summary, upvotes, discussion_id,
                 source, comments, submitted_at, submitted_by, loaded_at
             ) VALUES
             """,

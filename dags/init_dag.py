@@ -58,6 +58,7 @@ with DAG(
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS papers_ods (
             id TEXT,
+            authors TEXT[],
             published_at TIMESTAMP,
             title TEXT,
             summary TEXT,
@@ -126,6 +127,7 @@ with DAG(
         conn.execute("""
         CREATE TABLE IF NOT EXISTS papers_ods (
             id String,
+            authors Array(String),
             published_at DateTime,
             title Nullable(String),
             summary Nullable(String),
