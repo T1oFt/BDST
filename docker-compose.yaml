@@ -370,6 +370,44 @@ services:
     volumes:
       - ./data/minio:/data
 
+  superset-init:
+    image: apache/superset:latest-dev
+    container_name: superset-init
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      SUPERSET_CONFIG_PATH: /app/superset_config.py
+    volumes:
+      - ./superset_config.py:/app/superset_config.py
+    command: >
+      bash -c "
+        superset db upgrade &&
+        superset fab create-admin --username admin --firstname admin --lastname admin --email admin@admin.com --password admin &&
+        superset init
+      "
+    restart: "no"
+
+  superset:
+    image: apache/superset:latest-dev
+    container_name: superset
+    depends_on:
+      superset-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      SUPERSET_CONFIG_PATH: /app/superset_config.py
+    volumes:
+      - ./superset_config.py:/app/superset_config.py
+    ports:
+      - "8088:8088"
+    restart: always
+
 volumes:
   postgres-db-volume:
   user-pgdata:

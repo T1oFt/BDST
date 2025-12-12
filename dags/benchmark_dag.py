@@ -17,7 +17,7 @@ default_args = {
     'retry_delay': timedelta(minutes=1),
 }
 
-DATA_FILE = Path(__file__).parent / "res.json"
+DATA_FILE = Path(__file__).parent / "utils" / "res.json"
 
 def parse_datetime_field(value):
     if value is None:

@@ -1,4 +1,5 @@
 import requests
+import json
 from datetime import datetime, timedelta, timezone
 import logging
 
@@ -54,18 +55,27 @@ class PostsTransformer:
     
     def transform(self, post):
         try:
+            mention_names = [
+                m.get('name') for m in post.get('mentions', [])
+                if m.get('name') is not None
+            ]
+
+            attachment_types = [
+                a.get('type') for a in post.get('attachments', [])
+                if a.get('type') is not None
+            ]
+            
             data = {
                 'slug': post.get('slug'),
-                'author_name': post.get('author', {}).get('name'),
-                'author_id': post.get('author', {}).get('_id'),
+                'author': post.get('author', {}).get('name'),
                 'content_raw': post.get('rawContent'),
                 'published_at': self.format_datetime(post.get('publishedAt')),
                 'updated_at': self.format_datetime(post.get('updatedAt')),
                 'total_unique_impressions': post.get('totalUniqueImpressions'),
                 'num_comments': post.get('numComments'),
                 'reactions': post.get('reactions', []),
-                'mentions': post.get('mentions', []),
-                'attachments': post.get('attachments', []),
+                'mentions': mention_names,
+                'attachments': attachment_types,
             }
             return data
         except Exception as e:
@@ -88,16 +98,16 @@ class PostsLoader:
         pg_conn = self.pg_hook.get_conn()
         cursor = pg_conn.cursor()
         insert_sql = """
-        INSERT INTO posts_ods (
-            slug, author_name, author_id, content_raw, published_at, updated_at,
-            total_unique_impressions, num_comments, loaded_at
+        INSERT INTO ods.posts (
+            slug, author, content_raw, published_at, updated_at,
+            total_unique_impressions, num_comments, reactions, mentions, attachments, loaded_at
         ) VALUES (
-            %(slug)s, %(author_name)s, %(author_id)s, %(content_raw)s, %(published_at)s,
-            %(updated_at)s, %(total_unique_impressions)s, %(num_comments)s, %(loaded_at)s
+            %(slug)s, %(author)s, %(content_raw)s, %(published_at)s,
+            %(updated_at)s, %(total_unique_impressions)s, %(num_comments)s, %(reactions)s, %(mentions)s, %(attachments)s, %(loaded_at)s
         );
         """
         for post in posts:
-            post_with_ts = {**post, 'loaded_at': loaded_at}
+            post_with_ts = {**post, 'loaded_at': loaded_at, 'reactions': json.dumps(post['reactions'])}
             cursor.execute(insert_sql, post_with_ts)
         pg_conn.commit()
         cursor.close()
@@ -114,20 +124,22 @@ class PostsLoader:
         for post in posts:
             rows.append((
                 post.get('slug'),
-                post.get('author_name'),
-                post.get('author_id'),
+                post.get('author'),
                 post.get('content_raw'),
                 post.get('published_at'),
                 post.get('updated_at'),
                 post.get('total_unique_impressions', 0) or 0,
                 post.get('num_comments', 0) or 0,
+                json.dumps(post.get('reactions', [])),        
+                post.get('mentions', []) or [],
+                post.get('attachments', []) or [],
                 loaded_at
             ))
         client.execute(
             """
             INSERT INTO posts_ods (
-                slug, author_name, author_id, content_raw, published_at, updated_at,
-                total_unique_impressions, num_comments, loaded_at
+                slug, author, content_raw, published_at, updated_at,
+                total_unique_impressions, num_comments, reactions, mentions, attachments, loaded_at
             ) VALUES
             """,
             rows

@@ -8,11 +8,10 @@ import re
 
 
 class PapersExtractor:
-    def __init__(self):
-        self.date = datetime.now().strftime("%Y-%m-%d")
 
     def _get_daily_paper_ids(self):
-        daily_url = f"https://huggingface.co/papers/date/{self.date}"
+        date = datetime.now().strftime("%Y-%m-%d")
+        daily_url = f"https://huggingface.co/papers/date/{date}"
         
         try:
             response = requests.get(daily_url)
@@ -47,6 +46,14 @@ class PapersExtractor:
                 papers_data.append(paper)
         
         return papers_data
+    
+    def extract_papers_info(self, ids):
+        papers = []
+        for paper_id in ids:
+            paper = paper_info(paper_id)
+            if paper:
+                papers.append(paper)
+        return papers
 
 
 class PapersTransformer:
@@ -59,6 +66,9 @@ class PapersTransformer:
 
     def transform(self, paper):
         try:
+            org = paper.get('organization', None)
+            if org is not None:
+                org = org.get('name', None)
             data = {
                 'id': paper.get('id'),
                 'authors': paper.get('authors') or [],
@@ -71,6 +81,9 @@ class PapersTransformer:
                 'comments': paper.get('comments', 0),
                 'submitted_at': self.format_datetime(paper.get('submitted_at')),
                 'submitted_by': paper.get('submitted_by'),
+                'ai_summary': paper.get('ai_summary', None),
+                'ai_keywords': paper.get('ai_keywords', []),
+                'organization': org,
             }
             return data
         except Exception as e:
@@ -93,12 +106,12 @@ class PapersLoader:
         pg_conn = self.pg_hook.get_conn()
         cursor = pg_conn.cursor()
         insert_sql = """
-        INSERT INTO papers_ods (
+        INSERT INTO ods.papers (
             id, authors, published_at, title, summary, upvotes, discussion_id,
-            source, comments, submitted_at, submitted_by, loaded_at
+            source, comments, submitted_at, submitted_by, ai_summary, ai_keywords, organization, loaded_at
         ) VALUES (
             %(id)s, %(authors)s, %(published_at)s, %(title)s, %(summary)s, %(upvotes)s, %(discussion_id)s,
-            %(source)s, %(comments)s, %(submitted_at)s, %(submitted_by)s, %(loaded_at)s
+            %(source)s, %(comments)s, %(submitted_at)s, %(submitted_by)s, %(ai_summary)s, %(ai_keywords)s, %(organization)s, %(loaded_at)s
         );
         """
         for paper in papers:
@@ -129,13 +142,16 @@ class PapersLoader:
                 paper.get('comments', 0) or 0,
                 paper.get('submitted_at'),
                 paper.get('submitted_by'),
+                paper.get('ai_summary'),
+                paper.get('ai_keywords', []) or [],
+                paper.get('organization'),
                 loaded_at
             ))
         client.execute(
             """
             INSERT INTO papers_ods (
                 id, authors, published_at, title, summary, upvotes, discussion_id,
-                source, comments, submitted_at, submitted_by, loaded_at
+                source, comments, submitted_at, submitted_by, ai_summary, ai_keywords, organization, loaded_at
             ) VALUES
             """,
             rows

@@ -5,9 +5,10 @@ from airflow.providers.standard.operators.python import PythonOperator
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 from airflow.providers.mongo.hooks.mongo import MongoHook
 from airflow_clickhouse_plugin.hooks.clickhouse import ClickHouseHook
+from airflow.providers.standard.operators.trigger_dagrun import TriggerDagRunOperator
 from airflow.models import Variable
 from datetime import datetime, timedelta, timezone
-from services.posts_etl import PostsExtractor, PostsTransformer, PostsLoader
+from services.ods.posts_etl import PostsExtractor, PostsTransformer, PostsLoader
 from services.minio_client import MinioHook
 
 
@@ -23,7 +24,7 @@ MINIO_BUCKET = Variable.get("minio_bucket", default_var="etl-data")
 with DAG(
     'posts_etl',
     default_args=default_args,
-    schedule='@daily',
+    schedule='@hourly',
     catchup=False,
 ) as dag:
 
@@ -84,11 +85,21 @@ with DAG(
         mongo_hook = MongoHook(mongo_conn_id='mongo_hf_conn')
         clickhouse_hook = ClickHouseHook(clickhouse_conn_id='clickhouse_hf_conn')
 
+        loaded_at = datetime.now(timezone.utc)
+
         loader = PostsLoader(pg_hook, mongo_hook, clickhouse_hook)
-        loader.load_all(transformed, datetime.now(timezone.utc))
+        loader.load_all(transformed, loaded_at)
+
+        ti.xcom_push('posts_etl_loaded_at', loaded_at.isoformat())
 
     extract_task = PythonOperator(task_id='extract_task', python_callable=extract_fn)
     transform_task = PythonOperator(task_id='transform_task', python_callable=transform_fn)
     load_task = PythonOperator(task_id='load_task', python_callable=load_fn)
 
-    extract_task >> transform_task >> load_task
+    trigger_dds = TriggerDagRunOperator(
+        task_id='trigger_posts_dds',
+        trigger_dag_id='posts_dds',
+        conf={"loaded_at": "{{ ti.xcom_pull(task_ids='load_task', key='posts_etl_loaded_at') }}"},
+    )
+
+    extract_task >> transform_task >> load_task >> trigger_dds

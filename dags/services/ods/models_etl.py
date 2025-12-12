@@ -31,7 +31,6 @@ class ModelsTransformer:
             data = {
                 'id': raw_model.get('id'),
                 'owner': self.extract_owner(raw_model.get('id', '')),
-                'author': raw_model.get('author'),
                 'created_at': self.format_datetime(raw_model.get('created_at')),
                 'downloads': raw_model.get('downloads', 0),
                 'likes': raw_model.get('likes', 0),
@@ -48,7 +47,7 @@ class ModelsTransformer:
                 'diffusers_pipeline': categories.get('diffusers_pipeline'),
                 'deploy': categories.get('deploy'),
                 'dataset': categories.get('dataset'),
-                'arxiv': categories.get('arxiv'),
+                'arxiv': categories.get('arxiv', 0),
             }
             return data
         except Exception as e:
@@ -77,7 +76,7 @@ class ModelsTransformer:
             'diffusers_pipeline': None,
             'deploy': None,
             'dataset': None,
-            'arxiv': None,
+            'arxiv': 0,
         }
         
         languages = []
@@ -134,9 +133,9 @@ class ModelsTransformer:
         if libraries: categories['library'] = libraries
         if tasks: categories['task'] = tasks
         if base_models: categories['base_models'] = list(base_models)
-        if deploy_platforms: categories['deploy'] = deploy_platforms
+        if deploy_platforms: categories['deploy'] = deploy_platforms[0]
         if datasets: categories['dataset'] = datasets
-        if arxiv_papers: categories['arxiv'] = arxiv_papers
+        if arxiv_papers: categories['arxiv'] = len(arxiv_papers)
         
         return categories
     
@@ -156,13 +155,13 @@ class ModelsLoader:
         pg_conn = self.pg_hook.get_conn()
         cursor = pg_conn.cursor()
         insert_sql = """
-        INSERT INTO models_ods (
-            id, owner, author, created_at, downloads, likes, library_name,
+        INSERT INTO ods.models (
+            id, owner, created_at, downloads, likes, library_name,
             pipeline_tag, trending_score, language, library, task, license,
             base_models, modification, region, diffusers_pipeline, deploy,
             dataset, arxiv, loaded_at
         ) VALUES (
-            %(id)s, %(owner)s, %(author)s, %(created_at)s, %(downloads)s, %(likes)s,
+            %(id)s, %(owner)s, %(created_at)s, %(downloads)s, %(likes)s,
             %(library_name)s, %(pipeline_tag)s, %(trending_score)s,
             %(language)s, %(library)s, %(task)s, %(license)s,
             %(base_models)s, %(modification)s, %(region)s, %(diffusers_pipeline)s,
@@ -188,7 +187,6 @@ class ModelsLoader:
             rows.append((
                 model.get('id'),
                 model.get('owner'),
-                model.get('author'),
                 model.get('created_at'),
                 model.get('downloads', 0) or 0,
                 model.get('likes', 0) or 0,
@@ -203,15 +201,15 @@ class ModelsLoader:
                 model.get('modification'),
                 model.get('region'),
                 model.get('diffusers_pipeline'),
-                model.get('deploy') or [],
+                model.get('deploy'),
                 model.get('dataset') or [],
-                model.get('arxiv') or [],
+                model.get('arxiv', 0) or 0,
                 loaded_at
             ))
         client.execute(
             """
             INSERT INTO models_ods (
-                id, owner, author, created_at, downloads, likes, library_name,
+                id, owner, created_at, downloads, likes, library_name,
                 pipeline_tag, trending_score, language, library, task, license,
                 base_models, modification, region, diffusers_pipeline, deploy,
                 dataset, arxiv, loaded_at
