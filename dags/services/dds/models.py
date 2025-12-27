@@ -7,7 +7,7 @@ from psycopg2.extras import execute_values
 from huggingface_hub import get_user_overview
 import re
 
-from services.dds.help_dims import get_or_create_datasets_ids
+from services.dds.help_dims import get_or_create_datasets_ids, safe_int
 from services.dds.parties import upsert_parties_scd2
 from services.dds.bridge import FlexibleBridgeFiller
 
@@ -143,8 +143,8 @@ class ModelsDataTransformer:
             fact_models_raw.append(
                 {
                     "name": model_name,
-                    "downloads": int(row.get("downloads") or 0),
-                    "likes": int(row.get("likes") or 0),
+                    "downloads": safe_int(row.get("downloads") or 0),
+                    "likes": safe_int(row.get("likes") or 0),
                     "trending_score": float(
                         row.get("trending_score") or 0.0
                     ),

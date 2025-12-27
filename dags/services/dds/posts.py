@@ -7,7 +7,7 @@ from psycopg2.extras import execute_values
 from huggingface_hub import get_user_overview
 import re
 
-from services.dds.help_dims import get_or_create_datasets_ids
+from services.dds.help_dims import get_or_create_datasets_ids, safe_int
 from services.dds.parties import upsert_parties_scd2
 from services.dds.bridge import FlexibleBridgeFiller
 
@@ -105,10 +105,8 @@ class PostsDataTransformer:
             fact_posts_metrics_raw.append(
                 {
                     "slug": slug,
-                    "total_unique_impressions": int(
-                        row.get("total_unique_impressions") or 0
-                    ),
-                    "num_comments": int(row.get("num_comments") or 0),
+                    "total_unique_impressions": safe_int(row.get("total_unique_impressions")),
+                    "num_comments": safe_int(row.get("num_comments")),
                     "loaded_date": loaded_date_str,
                     "loaded_time": loaded_time_str,
                 }
@@ -120,7 +118,7 @@ class PostsDataTransformer:
             for r in reactions:
                 reaction_code = r.get("reaction")
                 users = r.get("users") or []
-                count = int(r.get("count") or 0)
+                count = safe_int(r.get("count") or 0)
 
                 if not reaction_code or not users:
                     continue
@@ -250,6 +248,7 @@ class PostsDataLoader:
             future_valid_to = loaded_at + timedelta(days=365 * 100)
 
             for rec in dim_posts_raw:
+                print(rec)
                 slug = rec["slug"]
                 author_name = rec["author_name"]
 

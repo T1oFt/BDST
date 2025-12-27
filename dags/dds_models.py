@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 
 from airflow import DAG
 from airflow.providers.standard.operators.python import PythonOperator
+from airflow.providers.standard.operators.trigger_dagrun import TriggerDagRunOperator
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 
 from services.dds.models import (
@@ -83,3 +84,10 @@ with DAG(
         task_id='dds_load_task',
         python_callable=dds_load_fn,
     )
+
+    trigger_ads = TriggerDagRunOperator(
+        task_id='trigger_models_ads',
+        trigger_dag_id='models_ads',
+    )
+
+    dds_load_task >> trigger_ads

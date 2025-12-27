@@ -555,6 +555,80 @@ with DAG(
         conn.commit()
         cursor.close()
 
+    def init_postgres_ads():
+        pg_hook = PostgresHook(postgres_conn_id='pg_hf_conn')
+        conn = pg_hook.get_conn()
+        cursor = conn.cursor()
+
+        #  Models
+        cursor.execute("""
+        CREATE SCHEMA IF NOT EXISTS ads;
+        """)
+
+        cursor.execute("""
+        -- 0. help_table          
+        CREATE TABLE IF NOT EXISTS ads.datamart_unique_top7d (
+        model_id INT PRIMARY KEY,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        -- 1. pipeline_tag PIE
+        CREATE TABLE IF NOT EXISTS ads.datamart_pipelinetag_pie (
+        pipeline_tag VARCHAR(100) PRIMARY KEY,
+        models_count INTEGER NOT NULL,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        -- 2. owners TREEMAP  
+        CREATE TABLE IF NOT EXISTS ads.datamart_owners_treemap (
+        owner_name VARCHAR(255),
+        owner_type VARCHAR(20),
+        models_count INTEGER NOT NULL,
+        avg_trending_score NUMERIC(6,3),
+        total_downloads BIGINT,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (owner_name, owner_type)
+        );
+
+        -- 3. trending LINE (уже без unique_top7d)
+        CREATE TABLE IF NOT EXISTS ads.datamart_trending_line (
+        trend_date DATE PRIMARY KEY,
+        avg_trending_score NUMERIC(6,3) NOT NULL,
+        median_trending_score NUMERIC(6,3),
+        models_count INTEGER NOT NULL,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        -- 4. leaderboard 30D
+        CREATE TABLE IF NOT EXISTS ads.datamart_leaderboard_30d (
+        rank_downloads INTEGER PRIMARY KEY,
+        model_name TEXT NOT NULL,
+        owner_name VARCHAR(255) NOT NULL,
+        modification_type VARCHAR(50),
+        latest_downloads_30d BIGINT NOT NULL,
+        latest_likes_30d BIGINT NOT NULL,
+        likes_ratio NUMERIC(6,4),
+        latest_trending_score NUMERIC(6,3),
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        -- 5-6. license + modification PIE
+        CREATE TABLE IF NOT EXISTS ads.datamart_license_histogram (
+        license VARCHAR(50) PRIMARY KEY,
+        models_count INTEGER NOT NULL,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS ads.datamart_modification_pie (
+        modification_type VARCHAR(50) PRIMARY KEY,
+        models_count INTEGER NOT NULL,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """)
+
+        conn.commit()
+        cursor.close()
+
     def init_clickhouse():
         ch_hook = ClickHouseHook(clickhouse_conn_id='clickhouse_hf_conn')
         conn = ch_hook.get_conn()
@@ -766,6 +840,7 @@ with DAG(
 
     init_postgres_ods_task = PythonOperator(task_id='init_postgres_ods', python_callable=init_postgres_ods)
     init_postgres_dds_task = PythonOperator(task_id='init_dds_postgres', python_callable=init_postgres_dds)
+    init_postgres_ads_task = PythonOperator(task_id='init_ads_postgres', python_callable=init_postgres_ads)
     init_clickhouse_task = PythonOperator(task_id='init_clickhouse', python_callable=init_clickhouse)
     init_mongodb_task = PythonOperator(task_id='init_mongodb', python_callable=init_mongodb)
     init_minio_task = PythonOperator(task_id='init_minio', python_callable=init_minio)

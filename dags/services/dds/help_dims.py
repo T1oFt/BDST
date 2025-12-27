@@ -1,4 +1,5 @@
 from typing import Set, Dict
+import pandas as pd
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 from psycopg2.extras import execute_values
 
@@ -139,3 +140,7 @@ def get_or_create_datasets_ids(
         conn.close()
 
     return ids_by_name
+
+
+def safe_int(val):
+                return int(val) if pd.notna(val) else 0
